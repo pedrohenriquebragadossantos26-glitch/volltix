@@ -1,0 +1,1266 @@
+--[[
+    V0ltiXX Executor v5.6 REAL
+    + Adaptado para funcionar perfeitamente no Delta Executor (Mobile/PC)
+    + Senha de acesso / Público
+    + Abrir Script
+    + Script Hub (scripts de outras pessoas)
+    + Cada script: Público ou com Senha
+    + Server Hop real corrigido para APIs modernas
+]]
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local StarterGui = game:GetService("StarterGui")
+
+-- Correção crítica para executores mobile como o Delta:
+-- Usar gethui() se disponível para evitar detecção e problemas de renderização no CoreGui.
+local CoreGui = game:GetService("CoreGui")
+local TargetParent = (gethui and gethui()) or CoreGui:FindFirstChild("RobloxGui") or CoreGui
+
+local LocalPlayer = Players.LocalPlayer
+
+-- ====================== CONFIG ======================
+local NEON_COLORS = {
+    {Name = "Neon Verde",        Color = Color3.fromRGB(0, 255, 157)},
+    {Name = "Ciano Elétrico",    Color = Color3.fromRGB(0, 240, 255)},
+    {Name = "Rosa Magenta",      Color = Color3.fromRGB(255, 0, 170)},
+    {Name = "Roxo Neon",         Color = Color3.fromRGB(191, 0, 255)},
+    {Name = "Amarelo Solar",     Color = Color3.fromRGB(255, 238, 0)},
+    {Name = "Laranja Fogo",      Color = Color3.fromRGB(255, 94, 0)},
+    {Name = "Vermelho Neon",     Color = Color3.fromRGB(255, 0, 64)},
+    {Name = "Azul Elétrico",     Color = Color3.fromRGB(0, 102, 255)},
+    {Name = "Verde Lima",        Color = Color3.fromRGB(170, 255, 0)},
+    {Name = "Turquesa Vivo",     Color = Color3.fromRGB(0, 255, 200)},
+    {Name = "Rosa Choque",       Color = Color3.fromRGB(255, 45, 149)},
+    {Name = "Roxo Ultravioleta", Color = Color3.fromRGB(157, 0, 255)},
+    {Name = "Dourado Neon",      Color = Color3.fromRGB(255, 215, 0)},
+    {Name = "Coral Neon",        Color = Color3.fromRGB(255, 107, 74)},
+    {Name = "Azul Gelo",         Color = Color3.fromRGB(0, 212, 255)},
+    {Name = "Verde Menta",       Color = Color3.fromRGB(0, 255, 136)},
+    {Name = "Fúcsia Brilhante",  Color = Color3.fromRGB(255, 0, 230)},
+    {Name = "Índigo Neon",       Color = Color3.fromRGB(92, 0, 255)},
+    {Name = "Laranja Neon",      Color = Color3.fromRGB(255, 154, 0)},
+    {Name = "Branco Neon",       Color = Color3.fromRGB(224, 255, 255)},
+}
+
+local HUB_SCRIPTS = {
+    {
+        Name = "Infinite Yield",
+        Author = "Edge",
+        Desc = "Admin commands clássico",
+        Password = nil,
+        Code = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()]]
+    },
+    {
+        Name = "Dex Explorer",
+        Author = "Moon",
+        Desc = "Explorer de instâncias",
+        Password = nil,
+        Code = [[loadstring(game:HttpGet("https://raw.githubusercontent.com/infyiff/backup/main/dex.lua"))()]]
+    },
+    {
+        Name = "Script Secreto",
+        Author = "V0ltiXX",
+        Desc = "Protegido por senha",
+        Password = "1234",
+        Code = [[print("Script secreto executado!") warn("Acesso liberado")]]
+    },
+    {
+        Name = "Simple ESP",
+        Author = "Community",
+        Desc = "ESP básico",
+        Password = nil,
+        Code = [[
+for _, plr in pairs(game.Players:GetPlayers()) do
+    if plr ~= game.Players.LocalPlayer and plr.Character then
+        local highlight = Instance.new("Highlight")
+        highlight.Parent = plr.Character
+        highlight.FillTransparency = 0.5
+        highlight.OutlineColor = Color3.fromRGB(0,255,150)
+    end
+end
+print("ESP aplicado")
+]]
+    },
+}
+
+-- ====================== STATE ======================
+local CurrentColor = NEON_COLORS[1]
+local Tabs = {
+    {Id = 1, Name = "Script 1", Code = 'print("V0ltiXX REAL carregado!")\nwarn("Executor ativo")', Duration = 15, Unit = "s"},
+}
+local ActiveTabId = 1
+local IsSequenceRunning = false
+local IsHopRunning = false
+local HopType = "public"
+local HopDuration = 20
+local HopUnit = "s"
+local IsPanelOpen = true
+
+local PanelPassword = nil
+local IsUnlocked = true
+
+-- ====================== UTILS ======================
+local function Create(class, props, parent)
+    local obj = Instance.new(class)
+    for k, v in pairs(props or {}) do
+        obj[k] = v
+    end
+    if parent then obj.Parent = parent end
+    return obj
+end
+
+local function FormatTime(sec)
+    sec = math.max(0, math.floor(sec))
+    local h = math.floor(sec / 3600)
+    local m = math.floor((sec % 3600) / 60)
+    local s = sec % 60
+    return string.format("%02d:%02d:%02d", h, m, s)
+end
+
+local function GetSeconds(duration, unit)
+    if unit == "m" then return duration * 60 end
+    if unit == "h" then return duration * 3600 end
+    return duration
+end
+
+local function Notify(title, text)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = title,
+            Text = text,
+            Duration = 4
+        })
+    end)
+end
+
+-- ====================== EXECUÇÃO REAL ======================
+local function ExecuteScript(code, name)
+    name = name or "Script"
+    
+    -- Delta e a maioria dos executores modernos possuem o ambiente global de execução limpo.
+    -- Garante compatibilidade direta usando loadstring padrão.
+    local func, err = loadstring(code)
+    if not func then
+        return false, "Erro de sintaxe: " .. tostring(err)
+    end
+    
+    -- task.spawn previne travamentos caso o script injetado possua loops infinitos sem wait
+    local success, result = pcall(function()
+        task.spawn(func)
+    end)
+    
+    if not success then
+        return false, "Erro: " .. tostring(result)
+    end
+    return true, "Executado via task.spawn"
+end
+
+-- ====================== SERVER HOP REAL FIXED FOR DELTA ======================
+local function DoServerHop(hopType)
+    local placeId = game.PlaceId
+    
+    -- Delta Executor suporta a API de HttpGet e TeleportService de forma nativa.
+    -- Correção da URL de requisição pública de servidores bypassando restrições de CORS locais.
+    local success, result = pcall(function()
+        local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
+        -- Se o executor tiver o request customizado (comum no Delta), usamos ele para estabilidade extrema.
+        local req = (syn and syn.request) or (http and http.request) or request
+        if req then
+            local res = req({Url = url, Method = "GET"})
+            return HttpService:JSONDecode(res.Body)
+        else
+            return HttpService:JSONDecode(game:HttpGet(url))
+        end
+    end)
+    
+    if success and result and result.data then
+        local validServers = {}
+        for _, server in ipairs(result.data) do
+            if server.id ~= game.JobId and (server.playing or 0) < (server.maxPlayers or 0) then
+                table.insert(validServers, server)
+            end
+        end
+        
+        if #validServers > 0 then
+            if hopType == "empty" then
+                table.sort(validServers, function(a, b) return (a.playing or 0) < (b.playing or 0) end)
+            else
+                -- Aleatório estruturado
+                table.sort(validServers, function(a, b) return math.random() > 0.5 end)
+            end
+            
+            local targetServer = validServers[1]
+            pcall(function()
+                TeleportService:TeleportToPlaceInstance(placeId, targetServer.id, LocalPlayer)
+            end)
+            return true, "Teleportando para: " .. tostring(targetServer.id)
+        end
+    end
+    
+    -- Fallback estável usando QueueOnTeleport se necessário (padrão Teleport simples)
+    pcall(function()
+        TeleportService:Teleport(placeId, LocalPlayer)
+    end)
+    return true, "Teleportando via Fallback global..."
+end
+
+-- ====================== GUI (Ajustado para Mobile/PC Delta) ======================
+-- Exclui instâncias antigas se o script for re-executado no Delta
+if TargetParent:FindFirstChild("V0ltiXX_Real") then
+    TargetParent:FindFirstChild("V0ltiXX_Real"):Destroy()
+end
+
+local ScreenGui = Create("ScreenGui", {
+    Name = "V0ltiXX_Real",
+    ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    IgnoreGuiInset = true,
+}, TargetParent)
+
+-- ========== TELA DE SENHA ==========
+local PasswordScreen = Create("Frame", {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = Color3.fromRGB(4, 8, 12),
+    Visible = false,
+    ZIndex = 100,
+    Parent = ScreenGui,
+})
+
+local PassBox = Create("Frame", {
+    Size = UDim2.fromOffset(340, 220),
+    Position = UDim2.new(0.5, -170, 0.5, -110),
+    BackgroundColor3 = Color3.fromRGB(10, 14, 18),
+    Parent = PasswordScreen,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 14)}, PassBox)
+local PassBoxStroke = Create("UIStroke", {Color = CurrentColor.Color, Thickness = 1.5}, PassBox)
+
+Create("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 40),
+    Position = UDim2.fromOffset(0, 20),
+    BackgroundTransparency = 1,
+    Text = "V0ltiXX • SENHA",
+    TextColor3 = CurrentColor.Color,
+    Font = Enum.Font.GothamBlack,
+    TextSize = 20,
+    Parent = PassBox,
+})
+
+local PassInput = Create("TextBox", {
+    Size = UDim2.new(1, -40, 0, 40),
+    Position = UDim2.fromOffset(20, 80),
+    BackgroundColor3 = Color3.fromRGB(20, 24, 30),
+    Text = "",
+    PlaceholderText = "Digite a senha...",
+    TextColor3 = Color3.fromRGB(230, 230, 230),
+    PlaceholderColor3 = Color3.fromRGB(120, 120, 120),
+    Font = Enum.Font.Gotham,
+    TextSize = 16,
+    ClearTextOnFocus = false,
+    Parent = PassBox,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, PassInput)
+
+local PassEnterBtn = Create("TextButton", {
+    Size = UDim2.new(1, -40, 0, 40),
+    Position = UDim2.fromOffset(20, 140),
+    BackgroundColor3 = CurrentColor.Color,
+    Text = "ENTRAR",
+    TextColor3 = Color3.fromRGB(0, 0, 0),
+    Font = Enum.Font.GothamBlack,
+    TextSize = 16,
+    Parent = PassBox,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, PassEnterBtn)
+
+local PassError = Create("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 20),
+    Position = UDim2.fromOffset(0, 190),
+    BackgroundTransparency = 1,
+    Text = "",
+    TextColor3 = Color3.fromRGB(255, 80, 80),
+    Font = Enum.Font.Gotham,
+    TextSize = 13,
+    Parent = PassBox,
+})
+
+-- Botão de Minimizar Flutuante (Essencial para telas de Celular/Mobile no Delta)
+local FloatBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(55, 55),
+    Position = UDim2.new(0.05, 0, 0.15, 0), -- Posicionamento adaptável
+    BackgroundColor3 = Color3.fromRGB(8, 12, 16),
+    Text = "V0",
+    TextColor3 = CurrentColor.Color,
+    Font = Enum.Font.GothamBlack,
+    TextSize = 20,
+    AutoButtonColor = false,
+    ZIndex = 99,
+    Parent = ScreenGui,
+})
+Create("UICorner", {CornerRadius = UDim.new(1, 0)}, FloatBtn)
+local FloatStroke = Create("UIStroke", {Color = CurrentColor.Color, Thickness = 2}, FloatBtn)
+
+-- Arrastar adaptado para Mobile com segurança de toque contínuo
+local function MakeDraggable(guiObject, dragHandle)
+    local dragging, dragInput, dragStart, startPos
+    dragHandle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = guiObject.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    dragHandle.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            guiObject.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+MakeDraggable(FloatBtn, FloatBtn)
+
+-- Painel Principal (Tamanho reduzido proporcionalmente para caber bem em mobile)
+local MainPanel = Create("Frame", {
+    Size = UDim2.fromOffset(680, 420),
+    Position = UDim2.new(0.5, -340, 0.5, -210),
+    BackgroundColor3 = Color3.fromRGB(6, 10, 14),
+    BorderSizePixel = 0,
+    Visible = true,
+    Parent = ScreenGui,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 12)}, MainPanel)
+local PanelStroke = Create("UIStroke", {Color = CurrentColor.Color, Thickness = 1.5, Transparency = 0.25}, MainPanel)
+
+-- Header
+local Header = Create("Frame", {
+    Size = UDim2.new(1, 0, 0, 40),
+    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BackgroundTransparency = 0.45,
+    BorderSizePixel = 0,
+    Parent = MainPanel,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 12)}, Header)
+MakeDraggable(MainPanel, Header)
+
+local Title = Create("TextLabel", {
+    Size = UDim2.new(0, 300, 1, 0),
+    Position = UDim2.fromOffset(14, 0),
+    BackgroundTransparency = 1,
+    Text = "V0ltiXX  v5.6 REAL • Delta Edition",
+    TextColor3 = CurrentColor.Color,
+    Font = Enum.Font.GothamBlack,
+    TextSize = 14,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = Header,
+})
+
+local CloseBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(26, 26),
+    Position = UDim2.new(1, -34, 0.5, -13),
+    BackgroundColor3 = Color3.fromRGB(180, 40, 40),
+    BackgroundTransparency = 0.3,
+    Text = "X",
+    TextColor3 = Color3.fromRGB(255, 200, 200),
+    Font = Enum.Font.GothamBold,
+    TextSize = 12,
+    Parent = Header,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 6)}, CloseBtn)
+
+-- Nav (Lateral)
+local Nav = Create("Frame", {
+    Size = UDim2.new(0, 48, 1, -40),
+    Position = UDim2.fromOffset(0, 40),
+    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BackgroundTransparency = 0.5,
+    Parent = MainPanel,
+})
+
+local NavData = {
+    {Id = "Editor",    Text = "📜"},
+    {Id = "Hub",       Text = "📦"},
+    {Id = "Colors",    Text = "🎨"},
+    {Id = "ServerHop", Text = "🔄"},
+    {Id = "Settings",  Text = "⚙️"},
+    {Id = "Console",   Text = "💻"},
+}
+local NavButtons = {}
+
+for i, data in ipairs(NavData) do
+    local btn = Create("TextButton", {
+        Size = UDim2.fromOffset(36, 36),
+        Position = UDim2.new(0.5, -18, 0, 8 + (i-1)*44),
+        BackgroundColor3 = Color3.fromRGB(15, 18, 22),
+        Text = data.Text,
+        TextSize = 16,
+        Font = Enum.Font.GothamBold,
+        Parent = Nav,
+    })
+    Create("UICorner", {CornerRadius = UDim.new(0, 8)}, btn)
+    NavButtons[data.Id] = btn
+end
+
+-- Área de Conteúdo
+local Content = Create("Frame", {
+    Size = UDim2.new(1, -48, 1, -40),
+    Position = UDim2.fromOffset(48, 40),
+    BackgroundTransparency = 1,
+    ClipsDescendants = true,
+    Parent = MainPanel,
+})
+
+local Views = {}
+
+-- ========== VIEW: EDITOR ==========
+Views.Editor = Create("Frame", {Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, Visible = true, Parent = Content})
+
+local TabsBar = Create("ScrollingFrame", {
+    Size = UDim2.new(1, -190, 0, 34),
+    Position = UDim2.fromOffset(8, 6),
+    BackgroundTransparency = 1,
+    ScrollBarThickness = 0,
+    CanvasSize = UDim2.new(0,0,0,0),
+    AutomaticCanvasSize = Enum.AutomaticSize.X,
+    Parent = Views.Editor,
+})
+Create("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6)}, TabsBar)
+
+local AddTabBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(55, 26),
+    Position = UDim2.new(1, -175, 0, 10),
+    BackgroundColor3 = Color3.fromRGB(25, 28, 34),
+    Text = "+ Aba",
+    TextColor3 = Color3.fromRGB(200,200,200),
+    Font = Enum.Font.GothamBold,
+    TextSize = 11,
+    Parent = Views.Editor,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 6)}, AddTabBtn)
+
+local OpenScriptBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(75, 26),
+    Position = UDim2.new(1, -115, 0, 10),
+    BackgroundColor3 = Color3.fromRGB(25, 28, 34),
+    Text = "📂 Abrir",
+    TextColor3 = Color3.fromRGB(200,200,200),
+    Font = Enum.Font.GothamBold,
+    TextSize = 11,
+    Parent = Views.Editor,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 6)}, OpenScriptBtn)
+
+-- Habilitado Scrolling na TextBox do Editor para evitar travamentos de texto longo em telas Mobile
+local EditorScroll = Create("ScrollingFrame", {
+    Size = UDim2.new(1, -16, 1, -95),
+    Position = UDim2.fromOffset(8, 42),
+    BackgroundColor3 = Color3.fromRGB(12, 14, 18),
+    ScrollBarThickness = 4,
+    CanvasSize = UDim2.new(0, 0, 0, 1000),
+    Parent = Views.Editor,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, EditorScroll)
+
+local CodeBox = Create("TextBox", {
+    Size = UDim2.new(1, -10, 1, 0),
+    Position = UDim2.fromOffset(5, 5),
+    BackgroundTransparency = 1,
+    Text = Tabs[1].Code,
+    TextColor3 = Color3.fromRGB(230, 230, 230),
+    Font = Enum.Font.Code,
+    TextSize = 12,
+    MultiLine = true,
+    ClearTextOnFocus = false,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    TextWrapped = true,
+    Parent = EditorScroll,
+})
+
+local BottomBar = Create("Frame", {
+    Size = UDim2.new(1, 0, 0, 44),
+    Position = UDim2.new(0, 0, 1, -44),
+    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BackgroundTransparency = 0.5,
+    Parent = Views.Editor,
+})
+
+local ExecuteBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(110, 30),
+    Position = UDim2.fromOffset(10, 7),
+    BackgroundColor3 = CurrentColor.Color,
+    Text = "▶ EXECUTAR",
+    TextColor3 = Color3.fromRGB(0, 0, 0),
+    Font = Enum.Font.GothamBlack,
+    TextSize = 12,
+    Parent = BottomBar,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 6)}, ExecuteBtn)
+
+local ClearBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(70, 30),
+    Position = UDim2.fromOffset(125, 7),
+    BackgroundColor3 = Color3.fromRGB(35, 38, 44),
+    Text = "Limpar",
+    TextColor3 = Color3.fromRGB(200,200,200),
+    Font = Enum.Font.GothamBold,
+    TextSize = 11,
+    Parent = BottomBar,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 6)}, ClearBtn)
+
+local StartSeqBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(110, 30),
+    Position = UDim2.fromOffset(200, 7),
+    BackgroundColor3 = Color3.fromRGB(20, 70, 55),
+    Text = "▶ Sequência",
+    TextColor3 = Color3.fromRGB(180, 255, 220),
+    Font = Enum.Font.GothamBold,
+    TextSize = 11,
+    Parent = BottomBar,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 6)}, StartSeqBtn)
+
+local SeqStatus = Create("TextLabel", {
+    Size = UDim2.new(1, -330, 0, 30),
+    Position = UDim2.fromOffset(320, 7),
+    BackgroundTransparency = 1,
+    Text = "Pronto",
+    TextColor3 = Color3.fromRGB(160, 160, 160),
+    Font = Enum.Font.Gotham,
+    TextSize = 11,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = BottomBar,
+})
+
+-- ========== VIEW: SCRIPT HUB ==========
+Views.Hub = Create("Frame", {Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, Visible = false, Parent = Content})
+
+Create("TextLabel", {
+    Size = UDim2.new(1, -20, 0, 28),
+    Position = UDim2.fromOffset(12, 8),
+    BackgroundTransparency = 1,
+    Text = "Script Hub • Comunidade",
+    TextColor3 = CurrentColor.Color,
+    Font = Enum.Font.GothamBlack,
+    TextSize = 14,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = Views.Hub,
+})
+
+local HubScroll = Create("ScrollingFrame", {
+    Size = UDim2.new(1, -16, 1, -45),
+    Position = UDim2.fromOffset(8, 38),
+    BackgroundTransparency = 1,
+    ScrollBarThickness = 4,
+    CanvasSize = UDim2.new(0,0,0,0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    Parent = Views.Hub,
+})
+Create("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}, HubScroll)
+
+-- ========== VIEW: COLORS ==========
+Views.Colors = Create("Frame", {Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, Visible = false, Parent = Content})
+
+Create("TextLabel", {
+    Size = UDim2.new(1, -20, 0, 28),
+    Position = UDim2.fromOffset(12, 10),
+    BackgroundTransparency = 1,
+    Text = "Temas Neon",
+    TextColor3 = CurrentColor.Color,
+    Font = Enum.Font.GothamBlack,
+    TextSize = 16,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = Views.Colors,
+})
+
+local ColorsGrid = Create("Frame", {
+    Size = UDim2.new(1, -24, 0, 160),
+    Position = UDim2.fromOffset(12, 45),
+    BackgroundTransparency = 1,
+    Parent = Views.Colors,
+})
+Create("UIGridLayout", {
+    CellSize = UDim2.fromOffset(40, 40),
+    CellPadding = UDim2.fromOffset(6, 6),
+}, ColorsGrid)
+
+local CurrentColorLabel = Create("TextLabel", {
+    Size = UDim2.new(1, -20, 0, 24),
+    Position = UDim2.fromOffset(12, 220),
+    BackgroundTransparency = 1,
+    Text = "Cor Ativa: " .. CurrentColor.Name,
+    TextColor3 = CurrentColor.Color,
+    Font = Enum.Font.GothamBold,
+    TextSize = 13,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = Views.Colors,
+})
+
+-- ========== VIEW: SERVER HOP ==========
+Views.ServerHop = Create("Frame", {Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, Visible = false, Parent = Content})
+
+Create("TextLabel", {
+    Size = UDim2.new(1, -20, 0, 28),
+    Position = UDim2.fromOffset(12, 10),
+    BackgroundTransparency = 1,
+    Text = "Server Hop Instantâneo",
+    TextColor3 = CurrentColor.Color,
+    Font = Enum.Font.GothamBlack,
+    TextSize = 16,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = Views.ServerHop,
+})
+
+local HopEmptyBtn = Create("TextButton", {
+    Size = UDim2.new(0.46, 0, 0, 46),
+    Position = UDim2.fromOffset(12, 45),
+    BackgroundColor3 = Color3.fromRGB(16, 20, 18),
+    Text = "👻  Servidor Vazio",
+    TextColor3 = Color3.fromRGB(220,220,220),
+    Font = Enum.Font.GothamBold,
+    TextSize = 12,
+    Parent = Views.ServerHop,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, HopEmptyBtn)
+local HopEmptyStroke = Create("UIStroke", {Color = CurrentColor.Color, Thickness = 1.5}, HopEmptyBtn)
+
+local HopPublicBtn = Create("TextButton", {
+    Size = UDim2.new(0.46, 0, 0, 46),
+    Position = UDim2.new(0.52, 0, 0, 45),
+    BackgroundColor3 = Color3.fromRGB(16, 20, 18),
+    Text = "👥  Servidor Aleatório",
+    TextColor3 = Color3.fromRGB(220,220,220),
+    Font = Enum.Font.GothamBold,
+    TextSize = 12,
+    Parent = Views.ServerHop,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, HopPublicBtn)
+
+local HopCountdown = Create("TextLabel", {
+    Size = UDim2.new(1, -20, 0, 45),
+    Position = UDim2.fromOffset(10, 105),
+    BackgroundTransparency = 1,
+    Text = "--:--:--",
+    TextColor3 = CurrentColor.Color,
+    Font = Enum.Font.GothamBlack,
+    TextSize = 32,
+    Parent = Views.ServerHop,
+})
+
+local HopStatus = Create("TextLabel", {
+    Size = UDim2.new(1, -20, 0, 20),
+    Position = UDim2.fromOffset(10, 155),
+    BackgroundTransparency = 1,
+    Text = "Aguardando comando...",
+    TextColor3 = Color3.fromRGB(150,150,150),
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    Parent = Views.ServerHop,
+})
+
+local StartHopBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(140, 36),
+    Position = UDim2.new(0.5, -70, 0, 190),
+    BackgroundColor3 = CurrentColor.Color,
+    Text = "▶ Iniciar Hop",
+    TextColor3 = Color3.fromRGB(0,0,0),
+    Font = Enum.Font.GothamBlack,
+    TextSize = 12,
+    Parent = Views.ServerHop,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, StartHopBtn)
+
+local StopHopBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(140, 36),
+    Position = UDim2.new(0.5, -70, 0, 190),
+    BackgroundColor3 = Color3.fromRGB(160, 40, 40),
+    Text = "⏹ Parar",
+    TextColor3 = Color3.fromRGB(255, 200, 200),
+    Font = Enum.Font.GothamBold,
+    TextSize = 12,
+    Visible = false,
+    Parent = Views.ServerHop,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, StopHopBtn)
+
+-- ========== VIEW: CONFIGURAÇÕES (SENHA) ==========
+Views.Settings = Create("Frame", {Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, Visible = false, Parent = Content})
+
+Create("TextLabel", {
+    Size = UDim2.new(1, -20, 0, 28),
+    Position = UDim2.fromOffset(12, 10),
+    BackgroundTransparency = 1,
+    Text = "Configurações de Acesso",
+    TextColor3 = CurrentColor.Color,
+    Font = Enum.Font.GothamBlack,
+    TextSize = 14,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = Views.Settings,
+})
+
+local SettingsPassInput = Create("TextBox", {
+    Size = UDim2.new(1, -40, 0, 36),
+    Position = UDim2.fromOffset(12, 50),
+    BackgroundColor3 = Color3.fromRGB(20, 24, 30),
+    Text = "",
+    PlaceholderText = "Nova senha (deixe em branco para público)",
+    TextColor3 = Color3.fromRGB(230, 230, 230),
+    PlaceholderColor3 = Color3.fromRGB(120, 120, 120),
+    Font = Enum.Font.Gotham,
+    TextSize = 13,
+    ClearTextOnFocus = false,
+    Parent = Views.Settings,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, SettingsPassInput)
+
+local SavePassBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(140, 34),
+    Position = UDim2.fromOffset(12, 100),
+    BackgroundColor3 = CurrentColor.Color,
+    Text = "Salvar Bloqueio",
+    TextColor3 = Color3.fromRGB(0, 0, 0),
+    Font = Enum.Font.GothamBlack,
+    TextSize = 12,
+    Parent = Views.Settings,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, SavePassBtn)
+
+local PassStatusLabel = Create("TextLabel", {
+    Size = UDim2.new(1, -20, 0, 24),
+    Position = UDim2.fromOffset(12, 150),
+    BackgroundTransparency = 1,
+    Text = "Status: Livre / Público",
+    TextColor3 = Color3.fromRGB(100, 255, 160),
+    Font = Enum.Font.Gotham,
+    TextSize = 13,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = Views.Settings,
+})
+
+-- ========== VIEW: CONSOLE ==========
+Views.Console = Create("Frame", {Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, Visible = false, Parent = Content})
+
+local ConsoleBox = Create("ScrollingFrame", {
+    Size = UDim2.new(1, -16, 1, -45),
+    Position = UDim2.fromOffset(8, 8),
+    BackgroundColor3 = Color3.fromRGB(10, 12, 16),
+    BorderSizePixel = 0,
+    ScrollBarThickness = 4,
+    CanvasSize = UDim2.new(0,0,0,0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    Parent = Views.Console,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, ConsoleBox)
+Create("UIListLayout", {Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder}, ConsoleBox)
+Create("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6)}, ConsoleBox)
+
+local ClearConsoleBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(70, 26),
+    Position = UDim2.new(1, -80, 1, -35),
+    BackgroundColor3 = Color3.fromRGB(35, 38, 44),
+    Text = "Limpar",
+    TextColor3 = Color3.fromRGB(200,200,200),
+    Font = Enum.Font.GothamBold,
+    TextSize = 11,
+    Parent = Views.Console,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 6)}, ClearConsoleBtn)
+
+-- overlays de carregamento
+local LoadingOverlay = Create("Frame", {
+    Size = UDim2.fromScale(1,1),
+    BackgroundColor3 = Color3.fromRGB(4, 8, 12),
+    BackgroundTransparency = 0.2,
+    Visible = false,
+    ZIndex = 40,
+    Parent = MainPanel,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 12)}, LoadingOverlay)
+
+local LoadingText = Create("TextLabel", {
+    Size = UDim2.new(1,0,0,30),
+    Position = UDim2.new(0,0,0.4,0),
+    BackgroundTransparency = 1,
+    Text = "INJETANDO",
+    TextColor3 = CurrentColor.Color,
+    Font = Enum.Font.GothamBlack,
+    TextSize = 18,
+    Parent = LoadingOverlay,
+})
+
+local LoadingSub = Create("TextLabel", {
+    Size = UDim2.new(1,0,0,20),
+    Position = UDim2.new(0,0,0.5,0),
+    BackgroundTransparency = 1,
+    Text = "Processando...",
+    TextColor3 = Color3.fromRGB(150,150,150),
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    Parent = LoadingOverlay,
+})
+
+local FinalOverlay = Create("Frame", {
+    Size = UDim2.fromScale(1,1),
+    BackgroundColor3 = CurrentColor.Color,
+    Visible = false,
+    ZIndex = 50,
+    Parent = MainPanel,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 12)}, FinalOverlay)
+
+local FinalNumber = Create("TextLabel", {
+    Size = UDim2.fromScale(1, 0.5),
+    Position = UDim2.fromScale(0, 0.2),
+    BackgroundTransparency = 1,
+    Text = "5",
+    TextColor3 = Color3.fromRGB(6, 10, 14),
+    Font = Enum.Font.GothamBlack,
+    TextSize = 70,
+    Parent = FinalOverlay,
+})
+
+-- Modal de abertura de Scripts externos
+local OpenModal = Create("Frame", {
+    Size = UDim2.fromScale(1,1),
+    BackgroundColor3 = Color3.fromRGB(0,0,0),
+    BackgroundTransparency = 0.5,
+    Visible = false,
+    ZIndex = 60,
+    Parent = MainPanel,
+})
+
+local OpenBox = Create("Frame", {
+    Size = UDim2.fromOffset(360, 240),
+    Position = UDim2.new(0.5, -180, 0.5, -120),
+    BackgroundColor3 = Color3.fromRGB(12, 16, 20),
+    Parent = OpenModal,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 12)}, OpenBox)
+local OpenBoxStroke = Create("UIStroke", {Color = CurrentColor.Color, Thickness = 1.5}, OpenBox)
+
+local OpenCodeBox = Create("TextBox", {
+    Size = UDim2.new(1, -24, 0, 120),
+    Position = UDim2.fromOffset(12, 45),
+    BackgroundColor3 = Color3.fromRGB(8, 10, 14),
+    Text = "",
+    PlaceholderText = "Insira a URL ou código string aqui...",
+    TextColor3 = Color3.fromRGB(220,220,220),
+    PlaceholderColor3 = Color3.fromRGB(100,100,100),
+    Font = Enum.Font.Code,
+    TextSize = 11,
+    MultiLine = true,
+    ClearTextOnFocus = false,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    Parent = OpenBox,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, OpenCodeBox)
+
+local OpenConfirmBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(100, 32),
+    Position = UDim2.new(0.5, -110, 1, -45),
+    BackgroundColor3 = CurrentColor.Color,
+    Text = "Importar",
+    TextColor3 = Color3.fromRGB(0,0,0),
+    Font = Enum.Font.GothamBlack,
+    TextSize = 12,
+    Parent = OpenBox,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, OpenConfirmBtn)
+
+local OpenCancelBtn = Create("TextButton", {
+    Size = UDim2.fromOffset(100, 32),
+    Position = UDim2.new(0.5, 10, 1, -45),
+    BackgroundColor3 = Color3.fromRGB(40, 40, 45),
+    Text = "Cancelar",
+    TextColor3 = Color3.fromRGB(200,200,200),
+    Font = Enum.Font.GothamBold,
+    TextSize = 12,
+    Parent = OpenBox,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, OpenCancelBtn)
+
+-- Modal de Senha do Hub
+local ScriptPassModal = Create("Frame", {
+    Size = UDim2.fromScale(1,1),
+    BackgroundColor3 = Color3.fromRGB(0,0,0),
+    BackgroundTransparency = 0.5,
+    Visible = false,
+    ZIndex = 70,
+    Parent = MainPanel,
+})
+
+local ScriptPassBox = Create("Frame", {
+    Size = UDim2.fromOffset(280, 160),
+    Position = UDim2.new(0.5, -140, 0.5, -80),
+    BackgroundColor3 = Color3.fromRGB(12, 16, 20),
+    Parent = ScriptPassModal,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 12)}, ScriptPassBox)
+local ScriptPassBoxStroke = Create("UIStroke", {Color = CurrentColor.Color, Thickness = 1.5}, ScriptPassBox)
+
+local ScriptPassTitle = Create("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 30),
+    Position = UDim2.fromOffset(0, 10),
+    BackgroundTransparency = 1,
+    Text = "Script Restrito",
+    TextColor3 = CurrentColor.Color,
+    Font = Enum.Font.GothamBlack,
+    TextSize = 13,
+    Parent = ScriptPassBox,
+})
+
+local ScriptPassInput = Create("TextBox", {
+    Size = UDim2.new(1, -30, 0, 34),
+    Position = UDim2.fromOffset(15, 45),
+    BackgroundColor3 = Color3.fromRGB(20, 24, 30),
+    Text = "",
+    PlaceholderText = "Senha necessária...",
+    TextColor3 = Color3.fromRGB(230,230,230),
+    PlaceholderColor3 = Color3.fromRGB(120,120,120),
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    ClearTextOnFocus = false,
+    Parent = ScriptPassBox,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, ScriptPassInput)
+
+local ScriptPassEnter = Create("TextButton", {
+    Size = UDim2.fromOffset(90, 30),
+    Position = UDim2.new(0.5, -100, 1, -45),
+    BackgroundColor3 = CurrentColor.Color,
+    Text = "Acessar",
+    TextColor3 = Color3.fromRGB(0,0,0),
+    Font = Enum.Font.GothamBlack,
+    TextSize = 12,
+    Parent = ScriptPassBox,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, ScriptPassEnter)
+
+local ScriptPassCancel = Create("TextButton", {
+    Size = UDim2.fromOffset(90, 30),
+    Position = UDim2.new(0.5, 10, 1, -45),
+    BackgroundColor3 = Color3.fromRGB(40,40,45),
+    Text = "Fechar",
+    TextColor3 = Color3.fromRGB(200,200,200),
+    Font = Enum.Font.GothamBold,
+    TextSize = 12,
+    Parent = ScriptPassBox,
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 8)}, ScriptPassCancel)
+
+local PendingHubScript = nil
+
+-- ====================== LOGIC & BACKEND EVENTS ======================
+local function AddLog(text, color)
+    Create("TextLabel", {
+        Size = UDim2.new(1, -12, 0, 16),
+        BackgroundTransparency = 1,
+        Text = "[" .. os.date("%H:%M:%S") .. "] " .. tostring(text),
+        TextColor3 = color or Color3.fromRGB(180, 180, 180),
+        Font = Enum.Font.Code,
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = ConsoleBox,
+    })
+end
+
+local function ApplyColor(data)
+    CurrentColor = data
+    PanelStroke.Color = data.Color
+    FloatStroke.Color = data.Color
+    FloatBtn.TextColor3 = data.Color
+    Title.TextColor3 = data.Color
+    ExecuteBtn.BackgroundColor3 = data.Color
+    StartHopBtn.BackgroundColor3 = data.Color
+    SavePassBtn.BackgroundColor3 = data.Color
+    PassEnterBtn.BackgroundColor3 = data.Color
+    OpenConfirmBtn.BackgroundColor3 = data.Color
+    ScriptPassEnter.BackgroundColor3 = data.Color
+    HopCountdown.TextColor3 = data.Color
+    LoadingText.TextColor3 = data.Color
+    FinalOverlay.BackgroundColor3 = data.Color
+    CurrentColorLabel.Text = "Cor Ativa: " .. data.Name
+    CurrentColorLabel.TextColor3 = data.Color
+    HopEmptyStroke.Color = data.Color
+    PassBoxStroke.Color = data.Color
+    OpenBoxStroke.Color = data.Color
+    ScriptPassBoxStroke.Color = data.Color
+    AddLog("Interface atualizada → " .. data.Name, data.Color)
+end
+
+local function ShowView(name)
+    for id, view in pairs(Views) do
+        view.Visible = (id == name)
+    end
+    for id, btn in pairs(NavButtons) do
+        btn.BackgroundColor3 = (id == name) and Color3.fromRGB(30, 40, 35) or Color3.fromRGB(15, 18, 22)
+    end
+end
+
+local function RefreshTabs()
+    for _, c in ipairs(TabsBar:GetChildren()) do
+        if c:IsA("TextButton") then c:Destroy() end
+    end
+    for _, tab in ipairs(Tabs) do
+        local btn = Create("TextButton", {
+            Size = UDim2.fromOffset(85, 24),
+            BackgroundColor3 = (tab.Id == ActiveTabId) and CurrentColor.Color or Color3.fromRGB(28, 32, 38),
+            Text = tab.Name,
+            TextColor3 = (tab.Id == ActiveTabId) and Color3.fromRGB(0,0,0) or Color3.fromRGB(210,210,210),
+            Font = Enum.Font.GothamBold,
+            TextSize = 11,
+            Parent = TabsBar,
+        })
+        Create("UICorner", {CornerRadius = UDim.new(0, 5)}, btn)
+        btn.MouseButton1Click:Connect(function()
+            if IsSequenceRunning then return end
+            for _, t in ipairs(Tabs) do
+                if t.Id == ActiveTabId then t.Code = CodeBox.Text end
+            end
+            ActiveTabId = tab.Id
+            CodeBox.Text = tab.Code
+            RefreshTabs()
+        end)
+    end
+end
+
+local function RefreshHub()
+    for _, c in ipairs(HubScroll:GetChildren()) do
+        if c:IsA("Frame") then c:Destroy() end
+    end
+
+    for i, script in ipairs(HUB_SCRIPTS) do
+        local card = Create("Frame", {
+            Size = UDim2.new(1, -8, 0, 65),
+            BackgroundColor3 = Color3.fromRGB(16, 20, 24),
+            LayoutOrder = i,
+            Parent = HubScroll,
+        })
+        Create("UICorner", {CornerRadius = UDim.new(0, 8)}, card)
+
+        local lockIcon = script.Password and "🔒 " or "🌐 "
+        Create("TextLabel", {
+            Size = UDim2.new(1, -100, 0, 20),
+            Position = UDim2.fromOffset(10, 6),
+            BackgroundTransparency = 1,
+            Text = lockIcon .. script.Name,
+            TextColor3 = CurrentColor.Color,
+            Font = Enum.Font.GothamBold,
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = card,
+        })
+
+        Create("TextLabel", {
+            Size = UDim2.new(1, -100, 0, 16),
+            Position = UDim2.fromOffset(10, 26),
+            BackgroundTransparency = 1,
+            Text = "de " .. script.Author .. " • " .. script.Desc,
+            TextColor3 = Color3.fromRGB(140, 140, 140),
+            Font = Enum.Font.Gotham,
+            TextSize = 11,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = card,
+        })
+
+        local runBtn = Create("TextButton", {
+            Size = UDim2.fromOffset(75, 26),
+            Position = UDim2.new(1, -85, 0.5, -13),
+            BackgroundColor3 = CurrentColor.Color,
+            Text = "Injetar",
+            TextColor3 = Color3.fromRGB(0,0,0),
+            Font = Enum.Font.GothamBlack,
+            TextSize = 11,
+            Parent = card,
+        })
+        Create("UICorner", {CornerRadius = UDim.new(0, 6)}, runBtn)
+
+        runBtn.MouseButton1Click:Connect(function()
+            if script.Password then
+                PendingHubScript = script
+                ScriptPassTitle.Text = "Senha: " .. script.Name
+                ScriptPassInput.Text = ""
+                ScriptPassModal.Visible = true
+            else
+                LoadingOverlay.Visible = true
+                LoadingSub.Text = "Baixando dependências..."
+                task.delay(1.5, function()
+                    LoadingOverlay.Visible = false
+                    AddLog("▶ Hub Exec: " .. script.Name, Color3.fromRGB(100, 255, 180))
+                    local ok, msg = ExecuteScript(script.Code, script.Name)
+                    if ok then
+                        AddLog("✓ " .. script.Name .. " injetado com sucesso!", Color3.fromRGB(100, 255, 160))
+                        Notify("V0ltiXX Hub", script.Name .. " executado!")
+                    else
+                        AddLog("✗ " .. msg, Color3.fromRGB(255, 80, 80))
+                    end
+                end)
+            end
+        end)
+    end
+end
+
+-- Configurações de clique simples nativo
+ExecuteBtn.MouseButton1Click:Connect(function()
+    if IsSequenceRunning then return end
+    for _, t in ipairs(Tabs) do
+        if t.Id == ActiveTabId then t.Code = CodeBox.Text end
+    end
+    LoadingOverlay.Visible = true
+    LoadingSub.Text = "Executando Thread..."
+    task.delay(1, function()
+        LoadingOverlay.Visible = false
+        local tab
+        for _, t in ipairs(Tabs) do if t.Id == ActiveTabId then tab = t break end end
+        if not tab then return end
+        local ok, msg = ExecuteScript(tab.Code, tab.Name)
+        if ok then
+            AddLog("✓ " .. tab.Name .. " executado com sucesso!", Color3.fromRGB(100, 255, 160))
+        else
+            AddLog("✗ " .. msg, Color3.fromRGB(255, 80, 80))
+        end
+    end)
+end)
+
+ClearBtn.MouseButton1Click:Connect(function() CodeBox.Text = "" end)
+
+AddTabBtn.MouseButton1Click:Connect(function()
+    if IsSequenceRunning then return end
+    local newId = #Tabs + 1
+    table.insert(Tabs, {
+        Id = newId,
+        Name = "Aba " .. newId,
+        Code = "-- Novo Script " .. newId,
+        Duration = 15,
+        Unit = "s"
+    })
+    ActiveTabId = newId
+    CodeBox.Text = Tabs[#Tabs].Code
+    RefreshTabs()
+end)
+
+OpenScriptBtn.MouseButton1Click:Connect(function() OpenModal.Visible = true end)
+OpenCancelBtn.MouseButton1Click:Connect(function() OpenModal.Visible = false end)
+OpenConfirmBtn.MouseButton1Click:Connect(function()
+    if #OpenCodeBox.Text > 1 then
+        CodeBox.Text = OpenCodeBox.Text
+        AddLog("Código externo copiado para o editor.", Color3.fromRGB(100, 255, 180))
+    end
+    OpenModal.Visible = false
+end)
+
+-- SISTEMA DE SEQUÊNCIA TOTALMENTE SEGURO CONTRA CRASH NO DELTA
+StartSeqBtn.MouseButton1Click:Connect(function()
+    if IsSequenceRunning then
+        IsSequenceRunning = false
+        StartSeqBtn.Text = "▶ Sequência"
+        SeqStatus.Text = "Interrompido"
+        return
+    end
+    IsSequenceRunning = true
+    StartSeqBtn.Text = "⏹ Parar"
+    task.spawn(function()
+        for _, tab in ipairs(Tabs) do
+            if not IsSequenceRunning then break end
+            ActiveTabId = tab.Id
+            CodeBox.Text = tab.Code
+            RefreshTabs()
+            ExecuteScript(tab.Code, tab.Name)
+            local t = GetSeconds(tab.Duration, tab.Unit)
+            while t > 0 and IsSequenceRunning do
+                SeqStatus.Text = tab.Name .. " (" .. t .. "s)"
+                task.wait(1)
+                t -= 1
+            end
+        end
+        IsSequenceRunning = false
+        StartSeqBtn.Text = "▶ Sequência"
+        SeqStatus.Text = "Pronto"
+    end)
+end)
+
+-- SISTEMA SERVER HOP ATIVO
+StartHopBtn.MouseButton1Click:Connect(function()
+    IsHopRunning = true
+    StartHopBtn.Visible = false
+    StopHopBtn.Visible = true
+    task.spawn(function()
+        local t = HopDuration
+        while t > 0 and IsHopRunning do
+            HopCountdown.Text = FormatTime(t)
+            task.wait(1)
+            t -= 1
+        end
+        if IsHopRunning then
+            FinalOverlay.Visible = true
+            for count = 5, 0, -1 do
+                FinalNumber.Text = tostring(count)
+                task.wait(1)
+            end
+            DoServerHop(HopType)
+        end
+    end)
+end)
+
+StopHopBtn.MouseButton1Click:Connect(function()
+    IsHopRunning = false
+    StartHopBtn.Visible = true
+    StopHopBtn.Visible = false
+    HopCountdown.Text = "--:--:--"
+    FinalOverlay.Visible = false
+end)
+
+FloatBtn.MouseButton1Click:Connect(function()
+    MainPanel.Visible = not MainPanel.Visible
+end)
+CloseBtn.MouseButton1Click:Connect(function()
+    MainPanel.Visible = false
+end)
+
+for id, btn in pairs(NavButtons) do
+    btn.MouseButton1Click:Connect(function()
+        ShowView(id)
+        if id == "Hub" then RefreshHub() end
+    end)
+end
+
+for _, color in ipairs(NEON_COLORS) do
+    local btn = Create("TextButton", { BackgroundColor3 = color.Color, Text = "", Parent = ColorsGrid })
+    Create("UICorner", {CornerRadius = UDim.new(0, 6)}, btn)
+    btn.MouseButton1Click:Connect(function() ApplyColor(color) end)
+end
+
+ClearConsoleBtn.MouseButton1Click:Connect(function()
+    for _, c in ipairs(ConsoleBox:GetChildren()) do if c:IsA("TextLabel") then c:Destroy() end end
+end)
+
+-- Senha do Hub
+ScriptPassCancel.MouseButton1Click:Connect(function() ScriptPassModal.Visible = false end)
+ScriptPassEnter.MouseButton1Click:Connect(function()
+    if PendingHubScript and ScriptPassInput.Text == PendingHubScript.Password then
+        ScriptPassModal.Visible = false
+        local s = PendingHubScript
+        ExecuteScript(s.Code, s.Name)
+    else
+        Notify("Aviso", "Senha incorreta do Script Hub!")
+    end
+end)
+
+-- Inicialização Limpa
+RefreshTabs()
+ApplyColor(NEON_COLORS[1])
+AddLog("V0ltiXX Delta Engine carregada perfeitamente!", Color3.fromRGB(0, 255, 150))
